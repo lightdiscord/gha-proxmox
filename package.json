@@ -1,0 +1,36 @@
+{
+  "name": "gha-proxmox",
+  "version": "0.0.1",
+  "description": "Controller for GitHub Actions self-hosted runners on Proxmox",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node .",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/lightdiscord/gha-proxmox.git"
+  },
+  "keywords": [
+    "proxmox",
+    "github",
+    "actions"
+  ],
+  "author": "LightDiscord <root@arnaud.sh>",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/lightdiscord/gha-proxmox/issues"
+  },
+  "homepage": "https://github.com/lightdiscord/gha-proxmox#readme",
+  "dependencies": {
+    "@octokit/auth-app": "^7.1.4",
+    "axios": "^1.7.9",
+    "fastify": "^5.2.1",
+    "jsonwebtoken": "^9.0.2",
+    "octokit": "^4.1.1"
+  },
+  "devDependencies": {
+    "prettier": "3.5.0"
+  }
+}

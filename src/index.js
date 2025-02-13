@@ -1,19 +1,27 @@
 import { Client } from "./api/proxmox.js";
 import { parsePropertyList, sleep, stringifyPropertyList } from "./utils.js";
-import jwt from "jsonwebtoken"
-import Fastify from "fastify"
+import jwt from "jsonwebtoken";
+import Fastify from "fastify";
 import { generateRunnerJitconfig } from "./api/github.js";
 import { Octokit } from "octokit";
 import { createAppAuth } from "@octokit/auth-app";
-import * as fs from "node:fs/promises"
+import * as fs from "node:fs/promises";
+import pino from "pino";
+
+const logger = pino({
+  level: "debug",
+});
+
+const LISTEN_HOST = process.env.LISTEN_HOST || "0.0.0.0";
+const PORT = parseInt(process.env.PORT) || 80;
 
 // TODO: Configure them from the outside.
 const GITHUB_APP_ID = process.env.GITHUB_APP_ID;
 const GITHUB_CLIENT_ID = process.env.GITHUB_CLIENT_ID;
 const GITHUB_INSTALLATION_ID = parseInt(process.env.GITHUB_INSTALLATION_ID);
-const GITHUB_PRIVATE_KEY = process.env.GITHUB_PRIVATE_KEY
+const GITHUB_PRIVATE_KEY = process.env.GITHUB_PRIVATE_KEY;
 
-const GITHUB_ORGANIZATION = process.env.GITHUB_ORGANIZATION
+const GITHUB_ORGANIZATION = process.env.GITHUB_ORGANIZATION;
 const GITHUB_RUNNER_GROUP_ID = parseInt(process.env.GITHUB_RUNNER_GROUP_ID);
 
 const PUBLIC_URL = process.env.PUBLIC_URL;
@@ -26,11 +34,13 @@ const PROXMOX_NODE = process.env.PROXMOX_NODE;
 const PROXMOX_POOL = process.env.PROXMOX_POOL;
 const PROXMOX_VMID = process.env.PROXMOX_VMID;
 const PROXMOX_FULL_CLONE = process.env.PROXMOX_FULL_CLONE === "true";
-const PROXMOX_MIN_VMID = parseInt(process.env.PROXMOX_MIN_VMID)
+const PROXMOX_MIN_VMID = parseInt(process.env.PROXMOX_MIN_VMID);
 const PROXMOX_MAX_VMID = parseInt(process.env.PROXMOX_MAX_VMID);
 
-const LABELS = process.env.LABELS.split(",").filter((x) => x.length > 0);
-const RUNNERS_MINIMUM = parseInt(process.env.RUNNERS_MINIMUM);
+const LABELS = process.env.LABELS.split(",").filter(
+  (label) => label.length > 0,
+);
+const RUNNERS_MINIMUM = parseInt(process.env.RUNNERS_MINIMUM) || 0;
 
 const proxmox = new Client({
   url: PROXMOX_URL,
@@ -45,36 +55,38 @@ const proxmox = new Client({
 });
 
 const fastify = Fastify({
-  logger: true,
-
   // Since JWT are passed as route parameters, this is required because they're longer than the default maximum.
-  maxParamLength: 500
-})
+  maxParamLength: 500,
+  loggerInstance: logger,
+});
+
+const privateKey = (await fs.readFile(GITHUB_PRIVATE_KEY)).toString();
+
 const octokit = new Octokit({
-    authStrategy: createAppAuth,
-    auth: {
-        appId: GITHUB_CLIENT_ID,
-        privateKey: (await fs.readFile(GITHUB_PRIVATE_KEY)).toString(),
-        installationId: GITHUB_INSTALLATION_ID
-    }
-})
+  authStrategy: createAppAuth,
+  auth: {
+    appId: GITHUB_CLIENT_ID,
+    installationId: GITHUB_INSTALLATION_ID,
+    privateKey,
+  },
+});
 
 fastify.get("/cloud-init/:token/user-data", async (request, reply) => {
-  console.log("before jwt verify")
-  const claims = jwt.verify(request.params.token, JWT_SECRET, { algorithms: ["HS256"] })
+  const claims = jwt.verify(request.params.token, JWT_SECRET, {
+    algorithms: ["HS256"],
+  });
 
-
-  console.log("before generate runner jit config")
-
-  const encoded_jit_config = await generateRunnerJitconfig({
-    config: {
-      organization: GITHUB_ORGANIZATION
+  const encoded_jit_config = await generateRunnerJitconfig(
+    {
+      config: {
+        organization: GITHUB_ORGANIZATION,
+      },
+      octokit,
     },
-    octokit
-
-  }, claims.name, ["self-hosted", "test"], GITHUB_RUNNER_GROUP_ID)
-
-  console.log(encoded_jit_config.data.encoded_jit_config)
+    claims.name,
+    ["self-hosted", ...LABELS],
+    GITHUB_RUNNER_GROUP_ID,
+  );
 
   return `#cloud-config
 
@@ -204,110 +216,130 @@ runcmd:
   - /root/install-runner.sh
   - systemctl daemon-reload
   - systemctl enable --now docker
-  - systemctl enable --now gha-runner`
-})
+  - systemctl enable --now gha-runner`;
+});
 
-fastify.get("/cloud-init/:token/meta-data", (request, reply) => {
-  reply.send("")
-  
-})
+fastify.get("/cloud-init/:token/meta-data", async (_request, reply) => {
+  reply.statusCode = 204;
+});
 
-fastify.get("/cloud-init/:token/vendor-data", (request, reply) => {
-  reply.send("")
-})
+fastify.get("/cloud-init/:token/vendor-data", async (_request, reply) => {
+  reply.statusCode = 204;
+});
 
-fastify.get("/cloud-init/:token/network-config", (request, reply) => {
-  reply.send("")
-})
+fastify.get("/cloud-init/:token/network-config", async (_request, reply) => {
+  reply.statusCode = 204;
+});
 
 fastify.listen({
-  host: "0.0.0.0",
-  port: 8000
-})
+  host: LISTEN_HOST,
+  port: PORT,
+});
 
-console.log("post listen")
+while (true) {
+  logger.debug("starting new reconciliation loop");
 
-async function main() {
+  const now = Date.now();
 
-  while (true) {
-    const now = Date.now()
-    let [{ members }] = await proxmox.listPoolMembers(PROXMOX_POOL, "qemu");
+  let [{ members }] = await proxmox.listPoolMembers(PROXMOX_POOL, "qemu");
 
-    members = members.filter(({ node, vmid }) => node === PROXMOX_NODE && vmid >= PROXMOX_MIN_VMID && vmid <= PROXMOX_MAX_VMID)
+  // Filter elements to only handle virtual machines on the targeted node and in the target range.
+  members = members.filter(
+    ({ node, vmid }) =>
+      node === PROXMOX_NODE &&
+      vmid >= PROXMOX_MIN_VMID &&
+      vmid <= PROXMOX_MAX_VMID,
+  );
 
-    for (const member of members) {
-      const config = await proxmox.qemuConfig(member.node, member.vmid)
-      const meta = parsePropertyList(config.meta)
+  for (const member of members) {
+    const subLogger = logger.child({ node: member.node, vmid: member.vmid });
 
-      const creation = (parseInt(meta.ctime) || 0) * 1000;
-      const age = now - creation
+    const config = await proxmox.qemuConfig(member.node, member.vmid);
+    const meta = parsePropertyList(config.meta);
 
-      if (member.status === "running" && age >= 1000 * 60 * 20) {
-        console.log("stopping qemu machine because of very old age", member.node, member.vmid)
+    const creation = (parseInt(meta.ctime) || 0) * 1000;
+    const age = now - creation;
 
-        const task = await proxmox.qemuSetStatus(member.node, member.vmid, "stop")
-        await proxmox.waitTask(member.node, task)
+    if (member.status === "running" && age >= 1000 * 60 * 20) {
+      subLogger.info("stopping qemu machine because of old age");
 
-        // Mark the member as stopped to ensure it gets deleted in the next check.
-        member.status = "stopped"
-      }
+      const task = await proxmox.qemuSetStatus(
+        member.node,
+        member.vmid,
+        "stop",
+      );
 
-      // Delay to ensure the system has time to starts, if the system is stopped after the grace period
-      // it means the runner has finished or an error occured while starting the instance.
-      if (member.status === "stopped" && age >= 1000 * 30) {
-        console.log("deleting stopped qemu machine", member.node, member.vmid)
-        const task = await proxmox.qemuDelete(member.node, member.vmid)
-        await proxmox.waitTask(member.node, task)
+      await proxmox.waitTask(member.node, task);
+
+      // Mark the member as stopped to ensure it gets deleted in the next check.
+      member.status = "stopped";
+    }
+
+    // Delay to ensure the system has time to starts, if the system is stopped after the grace period
+    // it means the runner has finished or an error occured while starting the instance.
+    if (member.status === "stopped" && age >= 1000 * 30) {
+      subLogger.info("deleting stopped qemu machine");
+
+      const task = await proxmox.qemuDelete(member.node, member.vmid);
+      await proxmox.waitTask(member.node, task);
+    }
+  }
+
+  for (let i = members.length; i < RUNNERS_MINIMUM; i++) {
+    let newid;
+
+    for (let j = PROXMOX_MIN_VMID; j <= PROXMOX_MAX_VMID; j++) {
+      if (!members.some(({ vmid }) => vmid === j)) {
+        newid = j;
+
+        // Push fake member to prevent reusing vmid
+        members.push({ vmid: newid });
+        break;
       }
     }
 
-    for (let i = members.length; i < RUNNERS_MINIMUM; i++) {
-      let newid;
+    if (!newid) {
+      logger.error("range of virtual machine id is full");
+      break;
+    }
 
-      for (let j = PROXMOX_MIN_VMID; j <= PROXMOX_MAX_VMID; j++) {
-        if (!members.some(({ vmid }) => vmid === j)) {
-          newid = j;
+    try {
+      logger.info(
+        { node: PROXMOX_NODE, vmid: newid },
+        "cloning virtual machine",
+      );
 
-          // Push fake member to prevent reusing vmid
-          members.push({ vmid: newid })
-          break;
-        }
-
-        if (j == PROXMOX_MAX_VMID) {
-          throw new Error("Range of virtual machine id is full")
-        }
-      }
-
-      console.log("cloning virtual machine", PROXMOX_NODE, newid)
-
-      const name = `gha-runner-${newid}`
+      const name = `gha-runner-${newid}`;
       const task = await proxmox.qemuClone(PROXMOX_NODE, PROXMOX_VMID, newid, {
         name,
         pool: PROXMOX_POOL,
-        full: PROXMOX_FULL_CLONE
-      })
+        full: PROXMOX_FULL_CLONE,
+      });
 
-      console.log(task)
-      await proxmox.waitTask(PROXMOX_NODE, task)
+      await proxmox.waitTask(PROXMOX_NODE, task);
 
-      const token = jwt.sign({ name }, JWT_SECRET, { algorithm: "HS256", expiresIn: "5m" })
+      const token = jwt.sign({ name }, JWT_SECRET, {
+        algorithm: "HS256",
+        expiresIn: "5m",
+      });
 
-      const config = await proxmox.qemuConfig(PROXMOX_NODE, newid)
-      
-      const smbios1 = parsePropertyList(config.smbios1)
-      smbios1["base64"] = 1,
-      smbios1["serial"] = btoa(`ds=nocloud;s=${PUBLIC_URL}/cloud-init/${token}/`)
+      const config = await proxmox.qemuConfig(PROXMOX_NODE, newid);
 
-      await proxmox.qemuSetConfig(PROXMOX_NODE, newid, {smbios1: stringifyPropertyList(smbios1)})
+      const smbios1 = parsePropertyList(config.smbios1);
+      (smbios1["base64"] = 1),
+        (smbios1["serial"] = btoa(
+          `ds=nocloud;s=${PUBLIC_URL}/cloud-init/${token}/`,
+        ));
 
-      await proxmox.qemuSetStatus(PROXMOX_NODE, newid, "start")
+      await proxmox.qemuSetConfig(PROXMOX_NODE, newid, {
+        smbios1: stringifyPropertyList(smbios1),
+      });
+
+      await proxmox.qemuSetStatus(PROXMOX_NODE, newid, "start");
+    } catch (e) {
+      logger.error(e, "error while creating virtual machine");
     }
-
-    await sleep(5000);
   }
-}
 
-main()
-  .catch((error) => {
-    console.error("an error occured", error.toString())
-  })
+  await sleep(5000);
+}

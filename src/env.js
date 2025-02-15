@@ -10,7 +10,7 @@ export const schema = z
 
     GITHUB_CLIENT_ID: z.string(),
     GITHUB_INSTALLATION_ID: z.coerce.number().nonnegative(),
-    GITHUB_PRIVATE_KEY: z.string(),
+    GITHUB_PRIVATE_KEY_FILE: z.string(),
 
     GITHUB_ORGANIZATION: z.string(),
     // TODO: Early validation to verify that the runner group already exists.
@@ -34,6 +34,12 @@ export const schema = z
 
     LABELS: z.string().regex(/^[a-z0-9_-]+(,[a-z0-9_-]+)*$/i),
     MINIMUM_RUNNERS: z.coerce.number().nonnegative(),
+    MAXIMUM_AGE: z.coerce
+      .number()
+      .nonnegative()
+      .default(60 * 24 * 2),
+
+    USER_DATA_FILE: z.string(),
   })
   .required()
   .refine((data) => data.PROXMOX_MIN_VMID <= data.PROXMOX_MAX_VMID);

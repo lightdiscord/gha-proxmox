@@ -14,6 +14,21 @@ runner.
   - https://bugzilla.proxmox.com/show_bug.cgi?id=6156
   - https://bugzilla.proxmox.com/attachment.cgi?id=1467
 
+- A GitHub application need to be created and installed.
+
+  - [GitHub documentation](https://docs.github.com/en/actions/hosting-your-own-runners/managing-self-hosted-runners-with-actions-runner-controller/authenticating-to-the-github-api#authenticating-arc-with-a-github-app).
+  - Organization settings > Developer settings > GitHub Apps > New GitHub App
+  - As Homepage URL, https://github.com/lightdiscord/gha-proxmox can be used.
+  - Webhook can be disabled
+  - Enable read-only for metadatas in repository permissions.
+  - Enable read and write for self-hosted runners in the organization permissions.
+  - Generate a private key for the application (see `GITHUB_PRIVATE_KEY_FILE`).
+  - Install the application on your organization, copy the installation ID in the URL.
+
+- A Proxmox Pool and a Virtual Machine that will be cloned. The virtual machine will need to have
+  cloud-init installed. It's a good idea to generate an image with all the required packages
+  already installed. The [Ubuntu Cloud Images](https://cloud-images.ubuntu.com/) can be used because they come with cloud-init already installed.
+
 - A Proxmox API token is required. The following permissions need to be attached :
   - `/vms/${PROXMOX_POOL}` role `PVEPoolUser`.
   - `/vms/${PROXMOX_POOL}` role `PVEVMAdmin`.
@@ -25,7 +40,7 @@ runner.
 ## Configuration
 
 | Variable                  | Description                                              | Default |
-|---------------------------|----------------------------------------------------------|---------|
+| ------------------------- | -------------------------------------------------------- | ------- |
 | `HOST`                    | Address used for the HTTP server                         | `::`    |
 | `PORT`                    | Port used for the HTTP server                            | `80`    |
 | `GITHUB_CLIENT_ID`        | Client ID of the GitHub application                      | None    |

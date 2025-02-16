@@ -12,8 +12,6 @@ RUN --mount=type=cache,target=/tmp/.npm npm ci --omit=dev && rm -rf /home/node/.
 
 COPY . .
 
-ENV PORT="80"
-ENV HOST="::"
 ENV USER_DATA_FILE=/app/templates/user-data
 
 ENTRYPOINT ["/usr/bin/dumb-init", "node", "src/index.js"]

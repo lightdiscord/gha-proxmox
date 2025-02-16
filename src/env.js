@@ -6,7 +6,8 @@ export const schema = z
     PORT: z.coerce
       .number()
       .nonnegative()
-      .lt(2 ** 16),
+      .lt(2 ** 16)
+      .default(80),
 
     GITHUB_CLIENT_ID: z.string(),
     GITHUB_INSTALLATION_ID: z.coerce.number().nonnegative(),
@@ -32,7 +33,10 @@ export const schema = z
     PROXMOX_MIN_VMID: z.coerce.number().gte(100),
     PROXMOX_MAX_VMID: z.coerce.number().gte(100),
 
-    LABELS: z.string().regex(/^[a-z0-9_-]+(,[a-z0-9_-]+)*$/i),
+    LABELS: z
+      .string()
+      .regex(/^(?:[a-z0-9_-]+(?:,[a-z0-9_-]+)*$|$)/i)
+      .default(""),
     MINIMUM_RUNNERS: z.coerce.number().nonnegative(),
     MAXIMUM_AGE: z.coerce
       .number()

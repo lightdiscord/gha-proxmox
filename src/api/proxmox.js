@@ -14,6 +14,15 @@ export class Client {
 
     this.axios.defaults.headers.common["Authorization"] =
       `PVEAPIToken=${options.token}`;
+
+    this.axios.interceptors.response.use(
+      (data) => {
+        return data;
+      },
+      (error) => {
+        return Promise.reject(error.response.data.message.trim());
+      },
+    );
   }
 
   async listPoolMembers(poolid, type) {

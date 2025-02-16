@@ -1,6 +1,6 @@
 {
   "name": "gha-proxmox",
-  "version": "0.0.1",
+  "version": "1.0.0",
   "description": "Controller for GitHub Actions self-hosted runners on Proxmox",
   "main": "src/index.js",
   "type": "module",
